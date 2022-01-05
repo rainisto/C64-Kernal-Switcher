@@ -1,5 +1,6 @@
-// C64MultiKernel.c Rev 1.14 (2019-06-17)
+// C64MultiKernel.c Rev 2.0 (2022-01-03)
 // coded by BWACK in mikroC, rewritten by TEBL for single LED.
+// SX-64 reset logic (inspired by SX-64 Ultra Reset) by Jonni
 
 
 // Multikernel switcher for the C64 breadbin/longboard
@@ -7,7 +8,8 @@
 // The microcontroller program flips through the four kernels by holding down
 // the RESTORE-key, in other words its a 'switchless' design. Red LED will flash
 // according to action, counting the flashes with 1 being reset, 2 is next 
-// kernal and the subsequent will jump to a specific kernal.
+// kernal, 3 will toggle drive number and the subsequent will jump to a specific
+// kernal.
 
 // MCU: PIC12F629 or PIC12F675
 // EasyPIC5 development board
@@ -19,6 +21,7 @@
 
 
 // changes:
+//   2022-01-03 Rev 2.0  - Rewritten for SX-64 reset logic
 //   2019-06-17 Rev 1.14 - Rewritten for single RGB
 //   2017-11-02 Rev 1.13.1 - Added support for PIC12F675
 //   2016-10-22 Rev 1.13 - putting the mcu to sleep
@@ -27,7 +30,7 @@
 //#define DEBUG // uncomment this before debugging
 
 // Inputs:
-#define RESTORE_N GP3_bit
+#define RESET_N GP3_bit
 // Outputs:
 #define RED_LED   GP2_bit
 #define INTRST_N  GP1_bit // open-collector
@@ -39,10 +42,12 @@
 #define KERNAL_TOGGLE 2
 #define KERNAL_SET 3
 #define RESET 4
+#define DRIVE_TOGGLE 5
 
 char STATE=IDLE_STATE;
 char cycle=0,buttontimer=0, old_button;
 char kernalno=0;
+char driveno=0;
 
 void setkernal(char _kernal) {
   GP4_bit=0;
@@ -52,6 +57,13 @@ void setkernal(char _kernal) {
   EEPROM_Write(0x00,kernalno);
 #endif
 }
+void setdrive(char _drive) {
+  GP0_bit=0;
+  GPIO|=driveno;
+#ifndef DEBUG
+  EEPROM_Write(0x01,driveno);
+#endif
+}
 
 void toggleKernal(void) {
   kernalno++;
@@ -59,19 +71,23 @@ void toggleKernal(void) {
   setkernal(kernalno);
 }
 
+void toggleDrive(void) {
+  driveno++;
+  driveno&=0x01;
+  setdrive(driveno);
+}
+
 void intres(void) {
-  INTRST_N=0;
-  TRISIO.B1=0; // pull INTRES_N low
+  INTRST_N=1;
   RED_LED=~RED_LED;
   delay_ms(50);
   RED_LED=~RED_LED;
   delay_ms(200); // was 500
-  TRISIO.B1=1; // release INTRES_N
-  INTRST_N=1; // for the debugger
+  INTRST_N=0;
 }
 
 void setLED(void) {
-  RED_LED = 1;
+  RED_LED = 0;    // default off
 }
 
 void blinkLED(void) {
@@ -92,19 +108,22 @@ void init(void) {
 #endif
   
 //ANSEL=0; // only defined for pic12f675
-  TRISIO=0b00001011;
-  INTRST_N=1;
-  RESTORE_N=1;
+  TRISIO=0b00001000;
+  INTRST_N=0;
+  RESET_N=1;
   RED_LED=0;
 #ifndef DEBUG
   kernalno=EEPROM_READ(0x00);
+  driveno=EEPROM_READ(0x01);
 #endif
   GP3_bit=1; // presetting inputs for the debugger
   if(kernalno>3) kernalno=0; // incase EEPROM garbage.
+  if(driveno>1) driveno=0; // incase EEPROM garbage.
   setkernal(kernalno);
+  setdrive(driveno);
   intres();
 
-  IOC = 0b00001010; // GPIO interrupt-on-change mask
+  IOC = 0b00001000; // GPIO interrupt-on-change mask
   GPIE_bit=1;       // GPIO Interrupt enable, on
   GIE_bit=0;        // Globale interrupt enable, off
 
@@ -127,7 +146,7 @@ void main() {
 
     switch(STATE) {
       case IDLE_STATE:
-        if(!RESTORE_N || !INTRST_N) {
+        if(!RESET_N ) {
           buttontimer++;
           delay_ms(100);
         } else {
@@ -151,25 +170,28 @@ void main() {
 
       case WAIT_RELEASE:
         switch (cycle) {
-          case 1:
+          case 1:                  // 1-2 seconds
             STATE=RESET;
             break;
-          case 2:
+          case 2:                  // 2-3 seconds
             STATE=KERNAL_TOGGLE;
             break;
-          case 3:
-            STATE=KERNAL_SET;
-            kernalno=0;
+          case 3:                  // 2-3 seconds
+            STATE=DRIVE_TOGGLE;
             break;
           case 4:
             STATE=KERNAL_SET;
-            kernalno=1;
+            kernalno=0;
             break;
           case 5:
             STATE=KERNAL_SET;
-            kernalno=2;
+            kernalno=1;
             break;
           case 6:
+            STATE=KERNAL_SET;
+            kernalno=2;
+            break;
+          case 7:
             STATE=KERNAL_SET;
             kernalno=3;
             break;
@@ -186,7 +208,13 @@ void main() {
         toggleKernal();
         delay_ms(20);
         break;
-        
+
+      case DRIVE_TOGGLE:
+        STATE=RESET;
+        toggleDrive();
+        delay_ms(20);
+        break;
+
       case KERNAL_SET:
         STATE=RESET;
         setkernal(kernalno);
