@@ -21,6 +21,7 @@
 
 
 // changes:
+//   2022-01-26 Rev 2.0.1 - Added config for start- and reset-sound toggle
 //   2022-01-03 Rev 2.0  - Rewritten for SX-64 reset logic
 //   2019-06-17 Rev 1.14 - Rewritten for single RGB
 //   2017-11-02 Rev 1.13.1 - Added support for PIC12F675
@@ -30,26 +31,30 @@
 //#define DEBUG // uncomment this before debugging
 
 // Inputs:
-#define RESET_N GP3_bit
+#define RESET_N   GP3_bit
 // Outputs:
 #define RED_LED   GP2_bit
 #define INTRST_N  GP1_bit // open-collector
 // Addresses on GPIO B4 and B5
 
 // finite state machine
-#define IDLE_STATE 0
-#define WAIT_RELEASE 1
-#define KERNAL_TOGGLE 2
-#define KERNAL_SET 3
-#define RESET 4
-#define DRIVE_TOGGLE 5
+#define IDLE_STATE        0
+#define WAIT_RELEASE      1
+#define KERNAL_TOGGLE     2
+#define KERNAL_SET        3
+#define RESET             4
+#define DRIVE_TOGGLE      5
+#define RESETSOUND_TOGGLE 6
+#define STARTSOUND_TOGGLE 7
 
 char STATE=IDLE_STATE;
 char cycle=0,buttontimer=0, old_button;
 char kernalno=0;
 char driveno=0;
+char resetsound=1;
+char startsound=1;
 
-void setkernal(char _kernal) {
+void setKernal(char _kernal) {
   GP4_bit=0;
   GP5_bit=0;
   GPIO|=kernalno<<4;
@@ -57,7 +62,7 @@ void setkernal(char _kernal) {
   EEPROM_Write(0x00,kernalno);
 #endif
 }
-void setdrive(char _drive) {
+void setDrive(char _drive) {
   GP0_bit=0;
   GPIO|=driveno;
 #ifndef DEBUG
@@ -65,24 +70,44 @@ void setdrive(char _drive) {
 #endif
 }
 
+void setResetSound(char _sound) {
+  EEPROM_Write(0x02,resetsound);
+}
+
+void setStartSound(char _sound) {
+  EEPROM_Write(0x03,startsound);
+}
+
 void toggleKernal(void) {
   kernalno++;
   kernalno&=0x03;
-  setkernal(kernalno);
+  setKernal(kernalno);
 }
 
 void toggleDrive(void) {
   driveno++;
   driveno&=0x01;
-  setdrive(driveno);
+  setDrive(driveno);
+}
+
+void toggleResetSound(void) {
+  resetsound++;
+  resetsound&=0x01;
+  setResetSound(resetsound);
+}
+
+void toggleStartSound(void) {
+  startsound++;
+  startsound&=0x01;
+  setStartSound(startsound);
 }
 
 void intres(void) {
   INTRST_N=1;
-  RED_LED=~RED_LED;
+  if(resetsound) RED_LED=~RED_LED;
+  delay_ms(200); // 200ms reset sound/blink
+  if(resetsound) RED_LED=~RED_LED;
   delay_ms(50);
-  RED_LED=~RED_LED;
-  delay_ms(200); // was 500
   INTRST_N=0;
 }
 
@@ -116,23 +141,29 @@ void init(void) {
   kernalno=EEPROM_READ(0x00);
   driveno=EEPROM_READ(0x01);
 #endif
+  resetsound=EEPROM_READ(0x02);
+  startsound=EEPROM_READ(0x03);
   GP3_bit=1; // presetting inputs for the debugger
-  if(kernalno>3) kernalno=0; // incase EEPROM garbage.
-  if(driveno>1) driveno=0; // incase EEPROM garbage.
-  setkernal(kernalno);
-  setdrive(driveno);
+  if(kernalno>3) kernalno=0;     // incase EEPROM garbage.
+  if(driveno>1) driveno=0;       // incase EEPROM garbage.
+  if(resetsound>1) resetsound=1; // incase EEPROM garbage.
+  if(startsound>1) startsound=1; // incase EEPROM garbage.
+  setKernal(kernalno);
+  setDrive(driveno);
   intres();
 
   IOC = 0b00001000; // GPIO interrupt-on-change mask
   GPIE_bit=1;       // GPIO Interrupt enable, on
   GIE_bit=0;        // Globale interrupt enable, off
 
-  for(_i=0; _i<5; _i++) {
-    //asm { CLRWDT };
-    RED_LED=1;
-    delay_ms(50);
-    RED_LED=0;
-    delay_ms(50);
+  if(startsound) {
+    for(_i=0; _i<5; _i++) {
+      //asm { CLRWDT };
+      RED_LED=1;
+      delay_ms(50);
+      RED_LED=0;
+      delay_ms(50);
+    }
   }
 }
 
@@ -195,12 +226,30 @@ void main() {
             STATE=KERNAL_SET;
             kernalno=3;
             break;
+          case 8:
+            STATE=RESETSOUND_TOGGLE;
+            break;
+          case 9:
+            STATE=STARTSOUND_TOGGLE;
+            break;
           default:
             STATE=RESET;
             break;
         }
         
         cycle=0;
+        break;
+
+      case RESETSOUND_TOGGLE:
+        STATE=RESET;
+        toggleResetSound();
+        delay_ms(20);
+        break;
+
+      case STARTSOUND_TOGGLE:
+        STATE=RESET;
+        toggleStartSound();
+        delay_ms(20);
         break;
 
       case KERNAL_TOGGLE:
@@ -217,7 +266,7 @@ void main() {
 
       case KERNAL_SET:
         STATE=RESET;
-        setkernal(kernalno);
+        setKernal(kernalno);
         delay_ms(20);
         break;
 
