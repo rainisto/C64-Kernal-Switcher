@@ -21,6 +21,7 @@
 
 
 // changes:
+//   2022-01-27 Rev 2.0.2 - Added config for wait time toggle
 //   2022-01-26 Rev 2.0.1 - Added config for start- and reset-sound toggle
 //   2022-01-03 Rev 2.0  - Rewritten for SX-64 reset logic
 //   2019-06-17 Rev 1.14 - Rewritten for single RGB
@@ -46,6 +47,7 @@
 #define DRIVE_TOGGLE      5
 #define RESETSOUND_TOGGLE 6
 #define STARTSOUND_TOGGLE 7
+#define WAITTIME_TOGGLE   8
 
 char STATE=IDLE_STATE;
 char cycle=0,buttontimer=0, old_button;
@@ -53,6 +55,7 @@ char kernalno=0;
 char driveno=0;
 char resetsound=1;
 char startsound=1;
+char waittime=0;
 
 void setKernal(char _kernal) {
   GP4_bit=0;
@@ -78,6 +81,10 @@ void setStartSound(char _sound) {
   EEPROM_Write(0x03,startsound);
 }
 
+void setWaitTime(char _waittime) {
+  EEPROM_Write(0x04,waittime);
+}
+
 void toggleKernal(void) {
   kernalno++;
   kernalno&=0x03;
@@ -100,6 +107,12 @@ void toggleStartSound(void) {
   startsound++;
   startsound&=0x01;
   setStartSound(startsound);
+}
+
+void toggleWaitTime(void) {
+  waittime++;
+  waittime&=0x01;
+  setWaitTime(waittime);
 }
 
 void intres(void) {
@@ -143,11 +156,13 @@ void init(void) {
 #endif
   resetsound=EEPROM_READ(0x02);
   startsound=EEPROM_READ(0x03);
+  waittime=EEPROM_READ(0x04);
   GP3_bit=1; // presetting inputs for the debugger
   if(kernalno>3) kernalno=0;     // incase EEPROM garbage.
   if(driveno>1) driveno=0;       // incase EEPROM garbage.
   if(resetsound>1) resetsound=1; // incase EEPROM garbage.
   if(startsound>1) startsound=1; // incase EEPROM garbage.
+  if(waittime>1) waittime=0;     // incase EEPROM garbage.
   setKernal(kernalno);
   setDrive(driveno);
   intres();
@@ -193,7 +208,7 @@ void main() {
         }
 
         // Bump cycle counter
-        if (buttontimer > 10) {
+        if (buttontimer > 10+waittime*10) {
           cycle++; buttontimer=0;
           blinkLED();
         }
@@ -232,6 +247,9 @@ void main() {
           case 9:
             STATE=STARTSOUND_TOGGLE;
             break;
+          case 10:
+            STATE=WAITTIME_TOGGLE;
+            break;
           default:
             STATE=RESET;
             break;
@@ -249,6 +267,12 @@ void main() {
       case STARTSOUND_TOGGLE:
         STATE=RESET;
         toggleStartSound();
+        delay_ms(20);
+        break;
+
+      case WAITTIME_TOGGLE:
+        STATE=RESET;
+        toggleWaitTime();
         delay_ms(20);
         break;
 
